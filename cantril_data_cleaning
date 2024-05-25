@@ -1,0 +1,84 @@
+#!/bin/bash
+
+file1="gdp-vs-happiness.tsv"
+file2="homicide-rate-unodc.tsv"
+file3="life-satisfaction-vs-life-expectancy.tsv"
+output_file="merged_data.tsv"
+
+# Check if the file format is tab-delimited
+check_format() {
+    local file=$1
+    if ! awk 'NR==1 { exit !(NF > 1) }' "$file"; then
+        echo "Error: $file is not tab-separated."
+        exit 1
+    fi
+}
+
+# Report any rows that do not have the same number of cells
+check_row_length() {
+    local file=$1
+    local num_columns=$(head -1 "$file" | awk -F'\t' '{print NF}')
+    awk -F'\t' -v num_columns="$num_columns" '{
+        if (NF != num_columns) {
+            print "Error: Row " NR " in " FILENAME " does not have " num_columns " fields.";
+            exit 1;
+        }
+    }' "$file"
+}
+
+# Check all file formats and line lengths
+for file in "$file1" "$file2" "$file3"; do
+    check_format "$file"
+    check_row_length "$file"
+done
+
+# Merge files and process data
+awk -F'\t' '
+    BEGIN {
+        OFS="\t";
+        print "Entity", "Code", "Year", "GDP per capita, PPP (constant 2017 international $)", "Population (historical estimates)", "Homicide rate per 100,000 population - Both sexes - All ages", "Life expectancy - Sex: all - Age: at birth - Variant: estimates", "Cantril ladder score";
+    }
+    FNR == 1 {
+        # Processing header rows and deleting columns with the title Continent
+        for (i = 1; i <= NF; i++) {
+            if ($i == "Continent") {
+                cont_idx = i;
+                break;
+            }
+        }
+        next
+    }
+    FILENAME == ARGV[1] {
+        key = $1 OFS $2 OFS $3;
+        if ($2 == "") next;
+        population[key] = $5;
+        gdp[key] = $4;
+        cantril[key] = $6;
+        next
+    }
+    FILENAME == ARGV[2] {
+        key = $1 OFS $2 OFS $3;
+        if ($2 == "") next;
+        homicide[key] = $4;
+        next
+    }
+    FILENAME == ARGV[3] {
+        key = $1 OFS $2 OFS $3;
+        if ($2 == "") next;
+        life[key] = $4;
+        next
+    }
+    END {
+        for (key in population) {
+            split(key, arr, OFS);
+            entity = arr[1];
+            code = arr[2];
+            year = arr[3];
+            if (year < 2011 || year > 2021) continue;
+            if (population[key] == "" || cantril[key] == "" || homicide[key] == "" || life[key] == "") continue;
+            print entity, code, year, population[key], cantril[key], homicide[key], life[key], gdp[key];
+        }
+    }
+' $file1 $file2 $file3 > $output_file
+
+echo "Data processing complete. Output saved to $output_file."
